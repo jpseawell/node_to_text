@@ -72,6 +72,53 @@ class ValidateGraphTests(unittest.TestCase):
 
         self.assertEqual(errors, [])
 
+    def test_accepts_live_dynamic_group_input_assignment(self) -> None:
+        group_schema = build_schema(
+            "ShaderNodeTree",
+            {
+                "ShaderNodeGroup": {
+                    "inputs": (),
+                    "outputs": (),
+                    "properties": {},
+                }
+            },
+        )
+        graph = parse_dsl('node group ShaderNodeGroup Color 1=(1,0,0,1)')
+        node_tree = _NodeTreeWithSockets(
+            [
+                _NodeWithSockets(
+                    name="group",
+                    bl_idname="ShaderNodeGroup",
+                    inputs=["Color 1"],
+                    outputs=["Shader"],
+                )
+            ]
+        )
+
+        errors = validate_graph(graph, node_tree, tree_schema=group_schema)
+
+        self.assertEqual(errors, [])
+
+
+class _Socket:
+    def __init__(self, name: str):
+        self.name = name
+
+
+class _NodeWithSockets:
+    def __init__(self, name: str, bl_idname: str, inputs: list[str], outputs: list[str]):
+        self.name = name
+        self.bl_idname = bl_idname
+        self.inputs = [_Socket(input_name) for input_name in inputs]
+        self.outputs = [_Socket(output_name) for output_name in outputs]
+
+
+class _NodeTreeWithSockets:
+    bl_idname = "ShaderNodeTree"
+
+    def __init__(self, nodes):
+        self.nodes = nodes
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -5,12 +5,14 @@ from __future__ import annotations
 bl_info = {
     "name": "Node to Text",
     "author": "GitHub Copilot",
-    "version": (0, 1, 0),
+    "version": (1, 1, 0),
     "blender": (4, 0, 0),
     "location": "Node Editor > Sidebar > Node to Text",
     "description": "Round-trip Blender node graphs through a deterministic DSL.",
     "category": "Node",
 }
+
+__version__ = ".".join(str(part) for part in bl_info["version"])
 
 try:
     import bpy  # type: ignore

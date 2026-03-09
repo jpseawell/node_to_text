@@ -6,6 +6,11 @@ import bpy  # type: ignore
 
 from node_to_text.graph.node_utils import get_active_node_tree
 
+try:
+    from node_to_text import __version__ as ADDON_VERSION
+except ImportError:  # pragma: no cover - Blender packaging edge case
+    ADDON_VERSION = "unknown"
+
 
 class NODE_DSL_PT_panel(bpy.types.Panel):
     bl_label = "Node to Text"
@@ -27,6 +32,8 @@ class NODE_DSL_PT_panel(bpy.types.Panel):
         column = layout.column(align=True)
         column.operator("node_dsl.export_graph")
         column.operator("node_dsl.apply_clipboard")
+        layout.separator()
+        layout.label(text=f"Version: v{ADDON_VERSION}")
 
 
 CLASSES = (NODE_DSL_PT_panel,)

@@ -19,3 +19,4 @@
 4. Use:
    - **Export Current Graph**
    - **Import From Clipboard**
+5. Check the installed add-on version at the bottom of the **Node to Text** sidebar panel.

@@ -41,7 +41,7 @@ def apply_diff(diff: GraphDiff, node_tree, tree_schema) -> None:
             value = property_schema.default if change.clear else change.value
             _apply_assignment(node, change.property_name, value)
             continue
-        if change.property_name in node_schema.inputs:
+        if change.property_name in node_schema.inputs or _has_input_socket(node, change.property_name):
             socket = get_socket(node, change.property_name, is_output=False)
             if not hasattr(socket, "default_value"):
                 raise ValueError(
@@ -86,3 +86,10 @@ def _apply_assignment(node, assignment_name, value) -> None:
             f"Input socket {assignment_name!r} on node type {node.bl_idname} does not support default values."
         )
     socket.default_value = value
+
+
+def _has_input_socket(node, socket_name: str) -> bool:
+    sockets = getattr(node, "inputs", [])
+    if hasattr(sockets, "get") and sockets.get(socket_name) is not None:
+        return True
+    return any(getattr(socket, "name", None) == socket_name for socket in sockets)

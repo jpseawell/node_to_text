@@ -16,6 +16,7 @@ class GraphValidationError(ValueError):
 
 def validate_graph(graph_def: GraphDefinition, node_tree_type, tree_schema=None) -> list[ValidationError]:
     schema = resolve_tree_schema(node_tree_type, tree_schema=tree_schema)
+    live_inputs_by_id, live_outputs_by_id = _collect_live_sockets_by_node_id(node_tree_type)
     errors: list[ValidationError] = []
     seen_ids: set[str] = set()
 
@@ -36,7 +37,9 @@ def validate_graph(graph_def: GraphDefinition, node_tree_type, tree_schema=None)
 
         for property_name, property_value in node.properties.items():
             property_schema = node_schema.properties.get(property_name)
-            if property_schema is None and property_name in node_schema.inputs:
+            valid_inputs = set(node_schema.inputs)
+            valid_inputs.update(live_inputs_by_id.get(node.id, ()))
+            if property_schema is None and property_name in valid_inputs:
                 continue
             if property_schema is None:
                 errors.append(
@@ -77,7 +80,12 @@ def validate_graph(graph_def: GraphDefinition, node_tree_type, tree_schema=None)
         if from_schema is None or to_schema is None:
             continue
 
-        if edge.from_socket not in from_schema.outputs:
+        valid_outputs = set(from_schema.outputs)
+        valid_outputs.update(live_outputs_by_id.get(from_node.id, ()))
+        valid_inputs = set(to_schema.inputs)
+        valid_inputs.update(live_inputs_by_id.get(to_node.id, ()))
+
+        if edge.from_socket not in valid_outputs:
             errors.append(
                 ValidationError(
                     edge.line_number,
@@ -85,7 +93,7 @@ def validate_graph(graph_def: GraphDefinition, node_tree_type, tree_schema=None)
                     f"Unknown output socket {edge.from_socket!r} on node {edge.from_node}.",
                 )
             )
-        if edge.to_socket not in to_schema.inputs:
+        if edge.to_socket not in valid_inputs:
             errors.append(
                 ValidationError(
                     edge.line_number,
@@ -100,3 +108,18 @@ def validate_graph(graph_def: GraphDefinition, node_tree_type, tree_schema=None)
 def raise_for_errors(errors: list[ValidationError]) -> None:
     if errors:
         raise GraphValidationError(errors)
+
+
+def _collect_live_sockets_by_node_id(node_tree) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
+    if not hasattr(node_tree, "nodes"):
+        return {}, {}
+
+    inputs_by_id: dict[str, set[str]] = {}
+    outputs_by_id: dict[str, set[str]] = {}
+    for node in getattr(node_tree, "nodes", []):
+        node_id = getattr(node, "name", None)
+        if not node_id:
+            continue
+        inputs_by_id[node_id] = {socket.name for socket in getattr(node, "inputs", [])}
+        outputs_by_id[node_id] = {socket.name for socket in getattr(node, "outputs", [])}
+    return inputs_by_id, outputs_by_id
