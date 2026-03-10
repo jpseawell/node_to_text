@@ -9,6 +9,17 @@ PrimitiveValue = Union[str, int, float, bool, None, tuple, list]
 
 
 @dataclass(frozen=True)
+class InterfaceSocketDef:
+    direction: str
+    name: str
+    socket_type: str
+    line_number: int | None = None
+
+    def key(self) -> tuple[str, str]:
+        return (self.direction, self.name)
+
+
+@dataclass(frozen=True)
 class NodeDef:
     id: str
     type: str
@@ -32,12 +43,17 @@ class EdgeDef:
 class GraphDefinition:
     nodes: list[NodeDef] = field(default_factory=list)
     edges: list[EdgeDef] = field(default_factory=list)
+    tree_type: str | None = None
+    interface_sockets: list[InterfaceSocketDef] = field(default_factory=list)
 
     def node_map(self) -> dict[str, NodeDef]:
         return {node.id: node for node in self.nodes}
 
     def edge_map(self) -> dict[tuple[str, str, str, str], EdgeDef]:
         return {edge.key(): edge for edge in self.edges}
+
+    def interface_map(self) -> dict[tuple[str, str], InterfaceSocketDef]:
+        return {socket.key(): socket for socket in self.interface_sockets}
 
 
 @dataclass(frozen=True)

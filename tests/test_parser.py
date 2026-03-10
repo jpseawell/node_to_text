@@ -23,6 +23,32 @@ class ParseDSLTests(unittest.TestCase):
         graph = parse_dsl('node ramp ShaderNodeValToRGB label="Edge Wear"')
         self.assertEqual(graph.nodes[0].properties["label"], "Edge Wear")
 
+    def test_parses_tree_and_interface_declarations(self) -> None:
+        graph = parse_dsl(
+            'tree GeometryNodeTree\n'
+            'interface input "Beam Depth" NodeSocketFloat\n'
+            'interface output Geometry NodeSocketGeometry\n'
+            'node "Group Input" NodeGroupInput\n'
+            'node "Group Output" NodeGroupOutput'
+        )
+
+        self.assertEqual(graph.tree_type, "GeometryNodeTree")
+        self.assertEqual(
+            [(socket.direction, socket.name, socket.socket_type) for socket in graph.interface_sockets],
+            [
+                ("INPUT", "Beam Depth", "NodeSocketFloat"),
+                ("OUTPUT", "Geometry", "NodeSocketGeometry"),
+            ],
+        )
+
+    def test_preserves_quoted_property_values_before_following_assignments(self) -> None:
+        graph = parse_dsl(
+            'node "Combine XYZ" ShaderNodeCombineXYZ label="Wall Size" location_absolute=none'
+        )
+
+        self.assertEqual(graph.nodes[0].properties["label"], "Wall Size")
+        self.assertIsNone(graph.nodes[0].properties["location_absolute"])
+
     def test_parses_spaced_node_ids_and_input_names(self) -> None:
         graph = parse_dsl(
             'node "Principled BSDF" ShaderNodeBsdfPrincipled Base Color=(1,0,0,1)\n'
@@ -71,6 +97,7 @@ connect bsdf.BSDF -> out.Surface
     def test_parses_dsl_from_mixed_response_text(self) -> None:
         graph = parse_dsl(
             """Updated graph below.
+            tree ShaderNodeTree
             node bsdf ShaderNodeBsdfPrincipled roughness=0.2
             node out ShaderNodeOutputMaterial
             connect bsdf.BSDF -> out.Surface
@@ -78,6 +105,16 @@ connect bsdf.BSDF -> out.Surface
         )
 
         self.assertEqual(len(graph.nodes), 2)
+        self.assertEqual(graph.tree_type, "ShaderNodeTree")
+
+
+    def test_parses_node_types_starting_with_node(self) -> None:
+        graph = parse_dsl(
+            'node "Group Input" NodeGroupInput location_absolute=none\n'
+            'node "Group Output" NodeGroupOutput location_absolute=none\n'
+        )
+        self.assertEqual(graph.nodes[0].type, "NodeGroupInput")
+        self.assertEqual(graph.nodes[1].type, "NodeGroupOutput")
 
 
 if __name__ == "__main__":

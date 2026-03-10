@@ -19,6 +19,19 @@ def export_node_tree(node_tree, tree_schema=None) -> str:
 def serialize_graph(graph: GraphDefinition) -> str:
     lines: list[str] = []
 
+    if graph.tree_type:
+        lines.append(f"tree {graph.tree_type}")
+
+    direction_order = {"INPUT": 0, "OUTPUT": 1}
+    for socket in sorted(
+        graph.interface_sockets,
+        key=lambda item: (direction_order.get(item.direction, 99), item.name, item.socket_type),
+    ):
+        direction = "input" if socket.direction == "INPUT" else "output"
+        lines.append(
+            f"interface {direction} {format_identifier(socket.name)} {socket.socket_type}"
+        )
+
     for node in sorted(graph.nodes, key=lambda item: item.id):
         parts = ["node", format_identifier(node.id), node.type]
         for key, value in sorted(node.properties.items()):

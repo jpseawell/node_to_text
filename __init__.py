@@ -5,7 +5,7 @@ from __future__ import annotations
 bl_info = {
     "name": "Node to Text",
     "author": "GitHub Copilot",
-    "version": (1, 1, 0),
+    "version": (1, 2, 0),
     "blender": (4, 0, 0),
     "location": "Node Editor > Sidebar > Node to Text",
     "description": "Round-trip Blender node graphs through a deterministic DSL.",

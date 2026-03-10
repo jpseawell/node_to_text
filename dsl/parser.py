@@ -6,7 +6,7 @@ import json
 import re
 import shlex
 
-from node_to_text.models import EdgeDef, GraphDefinition, NodeDef, ValidationError
+from node_to_text.models import EdgeDef, GraphDefinition, InterfaceSocketDef, NodeDef, ValidationError
 
 _CODE_BLOCK_RE = re.compile(r"```(?:[A-Za-z0-9_-]+)?\s*\n(.*?)```", re.DOTALL)
 _SCHEMA_SECTION_PREFIXES = ("inputs:", "outputs:", "properties:")
@@ -25,11 +25,25 @@ def parse_dsl(text: str) -> GraphDefinition:
     text = extract_dsl_text(text)
     nodes: list[NodeDef] = []
     edges: list[EdgeDef] = []
+    interface_sockets: list[InterfaceSocketDef] = []
     errors: list[ValidationError] = []
+    tree_type: str | None = None
 
     for line_number, raw_line in enumerate(text.splitlines(), start=1):
         line = raw_line.strip()
         if not line or line.startswith("#"):
+            continue
+        if line.startswith("tree "):
+            parsed_tree_type, tree_errors = _parse_tree_line(line, line_number)
+            if parsed_tree_type is not None:
+                tree_type = parsed_tree_type
+            errors.extend(tree_errors)
+            continue
+        if line.startswith("interface "):
+            interface_socket, interface_errors = _parse_interface_line(line, line_number)
+            if interface_socket is not None:
+                interface_sockets.append(interface_socket)
+            errors.extend(interface_errors)
             continue
         if line.startswith("node "):
             node, node_errors = _parse_node_line(line, line_number)
@@ -53,7 +67,12 @@ def parse_dsl(text: str) -> GraphDefinition:
 
     if errors:
         raise DSLParseError(errors)
-    return GraphDefinition(nodes=nodes, edges=edges)
+    return GraphDefinition(
+        nodes=nodes,
+        edges=edges,
+        tree_type=tree_type,
+        interface_sockets=interface_sockets,
+    )
 
 
 def extract_dsl_text(text: str) -> str:
@@ -72,12 +91,52 @@ def extract_dsl_text(text: str) -> str:
     return text
 
 
-def _parse_node_line(line: str, line_number: int) -> tuple[NodeDef | None, list[ValidationError]]:
-    body = line[len("node ") :].strip()
+def _parse_tree_line(line: str, line_number: int) -> tuple[str | None, list[ValidationError]]:
+    tree_type = line[len("tree ") :].strip()
+    if not tree_type:
+        return None, [ValidationError(line_number, "SyntaxError", "Tree declarations require a node tree type.")]
+    return tree_type, []
+
+
+def _parse_interface_line(
+    line: str, line_number: int
+) -> tuple[InterfaceSocketDef | None, list[ValidationError]]:
+    body = line[len("interface ") :].strip()
     try:
         tokens = shlex.split(body, posix=True)
     except ValueError as exc:
         return None, [ValidationError(line_number, "SyntaxError", str(exc))]
+
+    if len(tokens) != 3:
+        return None, [
+            ValidationError(
+                line_number,
+                "SyntaxError",
+                "Interface declarations require: interface <input|output> <name> <socket_type>.",
+            )
+        ]
+
+    direction_token, name, socket_type = tokens
+    direction = {"input": "INPUT", "output": "OUTPUT"}.get(direction_token.lower())
+    if direction is None:
+        return None, [
+            ValidationError(
+                line_number,
+                "SyntaxError",
+                f"Unknown interface direction {direction_token!r}; expected 'input' or 'output'.",
+            )
+        ]
+    return InterfaceSocketDef(direction=direction, name=name, socket_type=socket_type, line_number=line_number), []
+
+
+def _parse_node_line(line: str, line_number: int) -> tuple[NodeDef | None, list[ValidationError]]:
+    body = line[len("node ") :].strip()
+    try:
+        token_spans = _split_shell_tokens_with_spans(body)
+    except ValueError as exc:
+        return None, [ValidationError(line_number, "SyntaxError", str(exc))]
+
+    tokens = [token for token, _, _ in token_spans]
 
     if len(tokens) < 2:
         return None, [ValidationError(line_number, "SyntaxError", "Node declarations require an id and node type.")]
@@ -91,7 +150,7 @@ def _parse_node_line(line: str, line_number: int) -> tuple[NodeDef | None, list[
     if not node_id:
         return None, [ValidationError(line_number, "SyntaxError", "Node declarations require an id and node type.")]
 
-    assignment_text = " ".join(tokens[type_index + 1 :]).strip()
+    assignment_text = body[token_spans[type_index][2] :].strip()
     properties: dict[str, object] = {}
     errors: list[ValidationError] = []
     for token in _split_assignments(assignment_text):
@@ -157,7 +216,7 @@ def _parse_endpoint(
             f"Invalid {side} endpoint {endpoint!r}; expected <node>.<socket>.",
         )
     node_id = _unquote_identifier(node_id.strip())
-    return (node_id, socket_name.strip()), None
+    return (node_id, _unquote_identifier(socket_name.strip())), None
 
 
 def _parse_value(raw_value: str) -> object:
@@ -224,9 +283,9 @@ def _extract_candidate_lines(text: str) -> str | None:
             if found_dsl_line:
                 candidate_lines.append("")
             continue
-        if stripped.startswith("#") or stripped.startswith("node ") or stripped.startswith("connect "):
+        if stripped.startswith(("#", "tree ", "interface ", "node ", "connect ")):
             candidate_lines.append(stripped)
-            found_dsl_line = found_dsl_line or stripped.startswith(("node ", "connect "))
+            found_dsl_line = found_dsl_line or stripped.startswith(("tree ", "interface ", "node ", "connect "))
 
     if not found_dsl_line:
         return None
@@ -281,6 +340,50 @@ def _split_assignments(text: str) -> list[str]:
     return parts
 
 
+def _split_shell_tokens_with_spans(text: str) -> list[tuple[str, int, int]]:
+    tokens: list[tuple[str, int, int]] = []
+    index = 0
+    length = len(text)
+
+    while index < length:
+        while index < length and text[index].isspace():
+            index += 1
+        if index >= length:
+            break
+
+        start = index
+        quote_char = ""
+        while index < length:
+            char = text[index]
+            if quote_char:
+                if char == "\\" and index + 1 < length:
+                    index += 2
+                    continue
+                if char == quote_char:
+                    quote_char = ""
+                index += 1
+                continue
+
+            if char in {'"', "'"}:
+                quote_char = char
+                index += 1
+                continue
+            if char == "\\" and index + 1 < length:
+                index += 2
+                continue
+            if char.isspace():
+                break
+            index += 1
+
+        end = index
+        raw_token = text[start:end]
+        parsed_token = shlex.split(raw_token, posix=True)
+        if parsed_token:
+            tokens.append((parsed_token[0], start, end))
+
+    return tokens
+
+
 def _unquote_identifier(identifier: str) -> str:
     if len(identifier) >= 2 and identifier[0] == identifier[-1] and identifier[0] in {'"', "'"}:
         try:
@@ -291,7 +394,7 @@ def _unquote_identifier(identifier: str) -> str:
 
 
 def _looks_like_node_type(token: str) -> bool:
-    return bool(re.match(r"^[A-Za-z_][A-Za-z0-9_]*Node[A-Za-z0-9_]*$", token))
+    return bool(re.match(r"^(?:[A-Za-z_][A-Za-z0-9_]*)?Node[A-Za-z0-9_]+$", token))
 
 
 def _looks_like_assignment_start(text: str) -> bool:

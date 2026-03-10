@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from node_to_text.models import EdgeDef, GraphDefinition, NodeDef, PrimitiveValue
+from node_to_text.models import EdgeDef, GraphDefinition, InterfaceSocketDef, NodeDef, PrimitiveValue
 from node_to_text.schema.node_schema import SUPPORTED_TREE_TYPES, resolve_tree_schema
 
 
@@ -40,7 +40,12 @@ def graph_from_node_tree(node_tree, tree_schema=None) -> GraphDefinition:
             )
         )
 
-    return GraphDefinition(nodes=nodes, edges=edges)
+    return GraphDefinition(
+        nodes=nodes,
+        edges=edges,
+        tree_type=getattr(node_tree, "bl_idname", None),
+        interface_sockets=extract_interface_sockets(node_tree),
+    )
 
 
 def extract_exportable_properties(node, node_schema=None) -> dict[str, PrimitiveValue]:
@@ -98,3 +103,45 @@ def get_socket(node, socket_name: str, is_output: bool):
         if candidate.name == socket_name:
             return candidate
     raise ValueError(f"Socket {socket_name!r} was not found on node {node.name}.")
+
+
+def extract_interface_sockets(node_tree) -> list[InterfaceSocketDef]:
+    sockets: list[InterfaceSocketDef] = []
+    interface = getattr(node_tree, "interface", None)
+    items = getattr(interface, "items_tree", None)
+    if items is not None:
+        for item in items:
+            if getattr(item, "item_type", None) != "SOCKET":
+                continue
+            direction = getattr(item, "in_out", None)
+            name = getattr(item, "name", None)
+            socket_type = _get_interface_socket_type(item)
+            if direction in {"INPUT", "OUTPUT"} and name and socket_type:
+                sockets.append(
+                    InterfaceSocketDef(direction=direction, name=name, socket_type=socket_type)
+                )
+        return sockets
+
+    for direction, collection_name in (("INPUT", "inputs"), ("OUTPUT", "outputs")):
+        collection = getattr(node_tree, collection_name, None)
+        if collection is None:
+            continue
+        for socket in collection:
+            name = getattr(socket, "name", None)
+            socket_type = getattr(socket, "bl_socket_idname", None) or getattr(socket, "bl_idname", None)
+            if name and socket_type:
+                sockets.append(
+                    InterfaceSocketDef(direction=direction, name=name, socket_type=socket_type)
+                )
+    return sockets
+
+
+def _get_interface_socket_type(item) -> str | None:
+    for attribute in ("socket_type", "bl_socket_idname", "bl_idname"):
+        value = getattr(item, attribute, None)
+        if value:
+            return value
+    socket_idname = getattr(getattr(item, "socket_type", None), "identifier", None)
+    if socket_idname:
+        return socket_idname
+    return None

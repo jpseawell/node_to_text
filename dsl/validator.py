@@ -17,8 +17,23 @@ class GraphValidationError(ValueError):
 def validate_graph(graph_def: GraphDefinition, node_tree_type, tree_schema=None) -> list[ValidationError]:
     schema = resolve_tree_schema(node_tree_type, tree_schema=tree_schema)
     live_inputs_by_id, live_outputs_by_id = _collect_live_sockets_by_node_id(node_tree_type)
+    inferred_inputs_by_id, inferred_outputs_by_id = _collect_inferred_dynamic_sockets(graph_def)
     errors: list[ValidationError] = []
     seen_ids: set[str] = set()
+    declared_inputs_by_id, declared_outputs_by_id, interface_errors = _collect_declared_group_interface_sockets(
+        graph_def
+    )
+    errors.extend(interface_errors)
+
+    actual_tree_type = getattr(schema, "tree_type", None)
+    if graph_def.tree_type is not None and actual_tree_type is not None and graph_def.tree_type != actual_tree_type:
+        errors.append(
+            ValidationError(
+                None,
+                "GraphTypeMismatch",
+                f"DSL tree type {graph_def.tree_type!r} does not match target tree type {actual_tree_type!r}.",
+            )
+        )
 
     for node in graph_def.nodes:
         if node.id in seen_ids:
@@ -82,8 +97,12 @@ def validate_graph(graph_def: GraphDefinition, node_tree_type, tree_schema=None)
 
         valid_outputs = set(from_schema.outputs)
         valid_outputs.update(live_outputs_by_id.get(from_node.id, ()))
+        valid_outputs.update(declared_outputs_by_id.get(from_node.id, ()))
+        valid_outputs.update(inferred_outputs_by_id.get(from_node.id, ()))
         valid_inputs = set(to_schema.inputs)
         valid_inputs.update(live_inputs_by_id.get(to_node.id, ()))
+        valid_inputs.update(declared_inputs_by_id.get(to_node.id, ()))
+        valid_inputs.update(inferred_inputs_by_id.get(to_node.id, ()))
 
         if edge.from_socket not in valid_outputs:
             errors.append(
@@ -123,3 +142,52 @@ def _collect_live_sockets_by_node_id(node_tree) -> tuple[dict[str, set[str]], di
         inputs_by_id[node_id] = {socket.name for socket in getattr(node, "inputs", [])}
         outputs_by_id[node_id] = {socket.name for socket in getattr(node, "outputs", [])}
     return inputs_by_id, outputs_by_id
+
+
+def _collect_inferred_dynamic_sockets(
+    graph_def: GraphDefinition,
+) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
+    inputs_by_id: dict[str, set[str]] = {}
+    outputs_by_id: dict[str, set[str]] = {}
+    nodes_by_id = graph_def.node_map()
+
+    for edge in graph_def.edges:
+        from_node = nodes_by_id.get(edge.from_node)
+        if from_node is not None and from_node.type == "NodeGroupInput":
+            outputs_by_id.setdefault(edge.from_node, set()).add(edge.from_socket)
+
+        to_node = nodes_by_id.get(edge.to_node)
+        if to_node is not None and to_node.type == "NodeGroupOutput":
+            inputs_by_id.setdefault(edge.to_node, set()).add(edge.to_socket)
+
+    return inputs_by_id, outputs_by_id
+
+
+def _collect_declared_group_interface_sockets(
+    graph_def: GraphDefinition,
+) -> tuple[dict[str, set[str]], dict[str, set[str]], list[ValidationError]]:
+    inputs_by_id: dict[str, set[str]] = {}
+    outputs_by_id: dict[str, set[str]] = {}
+    errors: list[ValidationError] = []
+    seen: dict[tuple[str, str], str] = {}
+
+    for socket in graph_def.interface_sockets:
+        key = socket.key()
+        previous_type = seen.get(key)
+        if previous_type is not None and previous_type != socket.socket_type:
+            errors.append(
+                ValidationError(
+                    socket.line_number,
+                    "ConflictingInterfaceSocket",
+                    f"Interface socket {socket.name!r} for {socket.direction.lower()} is declared with conflicting socket types.",
+                )
+            )
+            continue
+        seen[key] = socket.socket_type
+
+        if socket.direction == "INPUT":
+            outputs_by_id.setdefault("Group Input", set()).add(socket.name)
+        elif socket.direction == "OUTPUT":
+            inputs_by_id.setdefault("Group Output", set()).add(socket.name)
+
+    return inputs_by_id, outputs_by_id, errors

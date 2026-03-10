@@ -99,6 +99,82 @@ class ValidateGraphTests(unittest.TestCase):
 
         self.assertEqual(errors, [])
 
+    def test_accepts_inferred_group_input_output_sockets_from_graph_edges(self) -> None:
+        group_schema = build_schema(
+            "GeometryNodeTree",
+            {
+                "NodeGroupInput": {
+                    "inputs": (),
+                    "outputs": (),
+                    "properties": {},
+                },
+                "NodeGroupOutput": {
+                    "inputs": (),
+                    "outputs": (),
+                    "properties": {},
+                },
+                "GeometryNodeMeshCube": {
+                    "inputs": ("Size",),
+                    "outputs": ("Mesh",),
+                    "properties": {},
+                },
+            },
+        )
+        graph = parse_dsl(
+            'node "Group Input" NodeGroupInput\n'
+            'node cube GeometryNodeMeshCube\n'
+            'node "Group Output" NodeGroupOutput\n'
+            'connect "Group Input".Beam Depth -> cube.Size\n'
+            'connect cube.Mesh -> "Group Output".Geometry'
+        )
+
+        errors = validate_graph(graph, "GeometryNodeTree", tree_schema=group_schema)
+
+        self.assertEqual(errors, [])
+
+    def test_accepts_declared_interface_sockets_without_live_tree_state(self) -> None:
+        group_schema = build_schema(
+            "GeometryNodeTree",
+            {
+                "NodeGroupInput": {
+                    "inputs": (),
+                    "outputs": (),
+                    "properties": {},
+                },
+                "NodeGroupOutput": {
+                    "inputs": (),
+                    "outputs": (),
+                    "properties": {},
+                },
+                "GeometryNodeMeshCube": {
+                    "inputs": ("Size",),
+                    "outputs": ("Mesh",),
+                    "properties": {},
+                },
+            },
+        )
+        graph = parse_dsl(
+            'tree GeometryNodeTree\n'
+            'interface input "Beam Depth" NodeSocketVector\n'
+            'interface output Geometry NodeSocketGeometry\n'
+            'node "Group Input" NodeGroupInput\n'
+            'node cube GeometryNodeMeshCube\n'
+            'node "Group Output" NodeGroupOutput\n'
+            'connect "Group Input"."Beam Depth" -> cube.Size\n'
+            'connect cube.Mesh -> "Group Output".Geometry'
+        )
+
+        errors = validate_graph(graph, "GeometryNodeTree", tree_schema=group_schema)
+
+        self.assertEqual(errors, [])
+
+    def test_rejects_mismatched_tree_type(self) -> None:
+        graph = parse_dsl('tree GeometryNodeTree\nnode noise ShaderNodeTexNoise')
+
+        errors = validate_graph(graph, "ShaderNodeTree", tree_schema=SCHEMA)
+
+        self.assertEqual(errors[0].error_type, "GraphTypeMismatch")
+
 
 class _Socket:
     def __init__(self, name: str):

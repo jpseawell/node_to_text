@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-EXAMPLE_DSL = """node noise ShaderNodeTexNoise scale=5 detail=2
+EXAMPLE_DSL = """tree ShaderNodeTree
+node noise ShaderNodeTexNoise scale=5 detail=2
 node ramp ShaderNodeValToRGB
 node bsdf ShaderNodeBsdfPrincipled roughness=0.4
 connect noise.Color -> ramp.Fac
@@ -14,11 +15,15 @@ def build_prompt_template(schema_text: str) -> str:
         "You generate Blender node graphs using the DSL below.",
         "",
         "DSL Syntax:",
+        "tree <tree_type>",
+        "interface <input|output> <name> <socket_type>",
         "node <id> <node_type> <property>=<value>",
         "connect <node>.<output> -> <node>.<input>",
         "",
         "Rules:",
         "- Do not invent node types",
+        "- Preserve the exported tree line unless you are intentionally converting graph types",
+        "- Preserve interface lines unless the task changes the group interface",
         "- Use valid socket names",
         "- Preserve stable node ids",
         "- Output only DSL",
@@ -34,10 +39,14 @@ def build_edit_prompt(current_graph_dsl: str, schema_text: str) -> str:
         "Return the modified graph as valid Node to Text.",
         "",
         "DSL Syntax:",
+        "tree <tree_type>",
+        "interface <input|output> <name> <socket_type>",
         "node <id> <node_type> <property>=<value>",
         "connect <node>.<output> -> <node>.<input>",
         "",
         "Rules:",
+        "- Preserve the tree line unless the task explicitly changes node graph type",
+        "- Preserve interface lines unless the task changes the group interface",
         "- Preserve existing node ids unless explicitly asked to rename them",
         "- Do not invent node types, property names, or socket names",
         "- Keep valid existing connections unless the task requires changing them",
@@ -58,6 +67,8 @@ def build_edit_prompt(current_graph_dsl: str, schema_text: str) -> str:
             "",
             "Return format:",
             "```dsl",
+            "tree <tree_type>",
+            "interface <input|output> <name> <socket_type>",
             "node <id> <node_type> <property>=<value>",
             "connect <node>.<output> -> <node>.<input>",
             "```",
